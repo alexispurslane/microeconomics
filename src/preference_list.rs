@@ -5,38 +5,54 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Contains all of the metadata required to satisfy a goal properly. This data
+/// is stored only in the preference list of the actor and the recurrance list
+/// of the actor, since the preference list is the data structure that is
+/// actually used when satisfying goals, and the recurrance list is the only
+/// place where the metadata about recurrance time intervals matter. I could
+/// have designed separate data structures for those two peices of information,
+/// but that would've been unweildy in my opinion.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum GoalData {
-    Regular {
-        goal: Goal,
-        time_required: i32,
-        time: i32,
-        id: i32,
-    },
+    /// A goal that either occurs at random times or only once.
     Satisfaction {
+        /// The goal to be satisfied
         goal: Goal,
+        /// Amount of acceptable units needed to satisfy this goal
         units_required: i32,
+        /// Current units diverted to this goal
         units: i32,
+        /// Unique id
         id: i32,
     },
+    /// A regularly recurring goal.
     RegularSatisfaction {
+        /// The goal to be satisfied
         goal: Goal,
+        /// Time required for this goal to reoccur
         time_required: i32,
+        /// Time since this goal was dismissed
         time: i32,
+        /// Amount of acceptable units needed to satisfy this goal
         units_required: i32,
+        /// Current units diverted to this goal
         units: i32,
+        /// Unique id
         id: i32,
     },
 }
 
 impl GoalData {
+    /// Get the goal this metadata might satisfy
     pub fn get_goal(&self) -> Goal {
         match self {
-            &GoalData::Regular { goal, .. }
-            | &GoalData::Satisfaction { goal, .. }
-            | &GoalData::RegularSatisfaction { goal, .. } => goal,
+            &GoalData::Satisfaction { goal, .. } | &GoalData::RegularSatisfaction { goal, .. } => {
+                goal
+            }
         }
     }
+
+    /// Check if this goal should be in the recurrance list
     pub fn is_recurring(&self) -> bool {
         match self {
             &GoalData::Satisfaction { .. } => false,
@@ -45,8 +61,14 @@ impl GoalData {
     }
 }
 
+/// This is necessary to take advantage of the automatic sorting abilities of
+/// the BinaryHeap that we use in the preference list. This only exists because
+/// of that, there's nothing special about this otherwise.
 pub struct GoalWrapper {
+    /// Closure that encloses a reference-counted pointer to the goal hierarchy
+    /// of the containing actor so it can do comparasons.
     comparator: Box<dyn Fn(&GoalData, &GoalData) -> Ordering>,
+    /// The actual interesting data that we want the BinaryHeap to sort
     goal: GoalData,
 }
 
@@ -70,10 +92,19 @@ impl Ord for GoalWrapper {
     }
 }
 
+/// A map of the item that must be valued or used to the max-heap containing the
+/// goals that can be satisfied with the item. Since the most highly-valued goal
+/// is the one that will always be referenced for both use and valuing, those
+/// operations need only ever deal with the root of the heap, making this very
+/// performant.
 pub type PreferenceList = HashMap<Item, BinaryHeap<GoalWrapper>>;
 
+/// This could easily be stored as a list, and in fact is constructed from one,
+/// but is more performant for our purposes as a map from a goal to how much it
+/// is valued.
 pub struct GoalHierarchy(HashMap<Goal, usize>);
 impl GoalHierarchy {
+    /// Constructs hierarchy out of table.
     fn new(goals: Vec<Goal>) -> Self {
         let mut hm = HashMap::new();
         for (i, goal) in goals.into_iter().enumerate() {
@@ -83,11 +114,18 @@ impl GoalHierarchy {
     }
 }
 
+/// Individual acting, valuing, satisfying Austrian microeconomic actor
 pub struct Actor {
+    /// Name for printouts
     name: String,
+    /// Goals that might show up later, so we need to cache their information
     recurring_goals: HashMap<Goal, GoalData>,
+    /// Mapping of items to their goals
     preference_list: PreferenceList,
+    /// Mapping of goals to the items that can satisfy them
     satisfactions: HashMap<Goal, Vec<Item>>,
+    // TODO: Make sure that goal heirarchy is strictly ordinal.
+    /// How much goals are valued
     goal_hierarchy: Rc<GoalHierarchy>,
 }
 
@@ -228,10 +266,6 @@ impl Actor {
             if let Some(wrapper) = goals.peek() {
                 let highest_valued_goal: GoalData = wrapper.goal;
                 match highest_valued_goal {
-                    GoalData::Regular { goal, .. } => {
-                        self.remove_goal(goal);
-                        Some(highest_valued_goal)
-                    }
                     GoalData::Satisfaction {
                         goal,
                         units_required,
