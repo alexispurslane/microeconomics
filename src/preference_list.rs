@@ -99,21 +99,6 @@ impl Ord for GoalWrapper {
 /// performant.
 pub type PreferenceList = HashMap<Item, BinaryHeap<GoalWrapper>>;
 
-/// This could easily be stored as a list, and in fact is constructed from one,
-/// but is more performant for our purposes as a map from a goal to how much it
-/// is valued.
-pub struct GoalHierarchy(pub HashMap<Goal, usize>);
-impl GoalHierarchy {
-    /// Constructs hierarchy out of table.
-    pub fn new(goals: Vec<Goal>) -> Self {
-        let mut hm = HashMap::new();
-        for (i, goal) in goals.into_iter().enumerate() {
-            hm.insert(goal, i);
-        }
-        GoalHierarchy(hm)
-    }
-}
-
 /// Individual acting, valuing, satisfying Austrian microeconomic actor
 pub struct Actor {
     /// Name for printouts
@@ -125,8 +110,10 @@ pub struct Actor {
     /// Mapping of goals to the items that can satisfy them
     satisfactions: HashMap<Goal, Vec<Item>>,
     // TODO: Make sure that goal heirarchy is strictly ordinal.
-    /// How much goals are valued
-    pub goal_hierarchy: Rc<GoalHierarchy>,
+    /// How much goals are valued. This could easily be stored as a list, and in
+    /// fact is constructed from one, but is more performant for our purposes as
+    /// a map from a goal to how much it is valued.
+    pub goal_hierarchy: HashMap<Goal, usize>,
 }
 
 impl Actor {
@@ -137,21 +124,20 @@ impl Actor {
     /// * `name` - actor's name, for printout results
     /// * `hierarchy` - list of actor's valued ends as `GoalData` so that they can also be added to other places.
     ///
-    pub fn new(name: String, hierarchy: Vec<GoalData>) -> Self {
+    pub fn new(
+        name: String,
+        hierarchy: Vec<GoalData>,
+        satisfactions: Vec<(Goal, Vec<Item>)>,
+    ) -> Self {
         let mut this = Actor {
             name: name,
             recurring_goals: HashMap::new(),
             preference_list: HashMap::new(),
-            satisfactions: HashMap::new(),
-            goal_hierarchy: Rc::new(GoalHierarchy::new(
-                hierarchy.iter().map(|x| x.get_goal()).collect(),
-            )),
+            satisfactions: satisfactions.into_iter().collect(),
+            goal_hierarchy: HashMap::new(),
         };
         for (i, goal) in hierarchy.into_iter().enumerate() {
             this.add_goal(goal, i);
-            if goal.is_recurring() {
-                this.recurring_goals.insert(goal.get_goal(), goal);
-            }
         }
         this
     }
@@ -171,8 +157,8 @@ impl Actor {
                     let gh = self.goal_hierarchy.clone();
                     let ordered_goal = GoalWrapper {
                         comparator: Box::new(move |x: &GoalData, y: &GoalData| {
-                            let xval = gh.0.get(&x.get_goal());
-                            let yval = gh.0.get(&y.get_goal());
+                            let xval = gh.get(&x.get_goal());
+                            let yval = gh.get(&y.get_goal());
                             xval.and_then(|x| yval.map(|y| x.cmp(y)))
                                 .unwrap_or(Ordering::Equal)
                         }),
@@ -190,10 +176,7 @@ impl Actor {
         if goal.is_recurring() {
             self.recurring_goals.insert(goal.get_goal(), goal.clone());
         }
-        Rc::get_mut(&mut self.goal_hierarchy)
-            .unwrap()
-            .0
-            .insert(goal.get_goal(), location);
+        self.goal_hierarchy.insert(goal.get_goal(), location);
     }
 
     /// Removes any goal in the entire list of goals this actor has.
@@ -228,8 +211,8 @@ impl Actor {
                                         new.push(GoalWrapper {
                                             comparator: Box::new(
                                                 move |x: &GoalData, y: &GoalData| {
-                                                    let xval = gh.0.get(&x.get_goal());
-                                                    let yval = gh.0.get(&y.get_goal());
+                                                    let xval = gh.get(&x.get_goal());
+                                                    let yval = gh.get(&y.get_goal());
                                                     xval.and_then(|x| yval.map(|y| x.cmp(y)))
                                                         .unwrap_or(Ordering::Equal)
                                                 },
@@ -245,10 +228,7 @@ impl Actor {
             }
         }
         self.recurring_goals.remove(&actual_goal);
-        Rc::get_mut(&mut self.goal_hierarchy)
-            .unwrap()
-            .0
-            .remove(&actual_goal);
+        self.goal_hierarchy.remove(&actual_goal);
     }
 
     /// Uses an item to satisfy the most valued goal it can satisfy.

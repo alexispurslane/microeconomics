@@ -48,15 +48,24 @@ fn main() -> io::Result<()> {
     let mut trng = rand::thread_rng();
     let mut actors: HashMap<String, Actor> = (0..opts.actor_number)
         .map(|i: i32| {
-            let mut a = Actor::new(format!("Actor#{}", i), GOAL_HIREARCHY.clone());
-            a.add_satisfaction_entry(Goal::Eat, Item::FoodUnit);
-            a.add_satisfaction_entry(Goal::Shelter, Item::HouseUnit);
-            a.add_satisfaction_entry(
-                Goal::Leisure,
-                *vec![Item::LeisureUnit1, Item::LeisureUnit2]
-                    .iter()
-                    .choose(&mut trng)
-                    .unwrap(),
+            let mut a = Actor::new(
+                format!("Actor#{}", i),
+                GOAL_HIREARCHY.clone(),
+                vec![
+                    (Goal::Eat, vec![Item::FoodUnit]),
+                    (Goal::Shelter, vec![Item::HouseUnit]),
+                    (
+                        Goal::Leisure,
+                        vec![
+                            Item::FoodUnit,
+                            Item::HouseUnit,
+                            *vec![Item::LeisureUnit1, Item::LeisureUnit2]
+                                .iter()
+                                .choose(&mut trng)
+                                .unwrap(),
+                        ],
+                    ),
+                ],
             );
             (a.name.clone(), a)
         })
@@ -68,7 +77,9 @@ fn main() -> io::Result<()> {
     println!("");
 
     let mut reader = Interface::new("microeconomics")?;
-    reader.set_completer(Arc::new(InterfaceCompleter));
+    reader.set_completer(Arc::new(InterfaceCompleter(
+        actors.keys().into_iter().map(|x| x.clone()).collect(),
+    )));
     reader.set_prompt(&"interaction> ".bold().blue().to_string())?;
 
     while let ReadResult::Input(input) = reader.read_line()? {
@@ -85,16 +96,40 @@ fn main() -> io::Result<()> {
                 }
                 println!();
             }
-            ["get-actor", actorid, property] => {
+            ["get-actor", property, actorid] => {
                 if let Some(actor) = actors.get(&actorid.to_string()) {
                     match *property {
-                        "preference-list" => {}
+                        "preference-list" => {
+                            println!("ordinal hierarchy of items for {}:", actorid);
+                            println!("");
+                            println!(
+                                "{:20} | {:20} | {:20}",
+                                "Item".bold(),
+                                "Highest-Valued Goal".bold(),
+                                "# Goals".bold()
+                            );
+                            let twenty = "-".to_string().repeat(20);
+                            println!("{}-+-{}-+-{}", twenty, twenty, twenty);
+                            for (item, bh) in actor.preference_list.iter() {
+                                println!(
+                                    "{:20} | {:20} | {:20}",
+                                    format!("{:?}", item),
+                                    if let Some(g) = bh.peek() {
+                                        format!("{:?}", g.goal.get_goal())
+                                    } else {
+                                        "N/A".to_string()
+                                    },
+                                    format!("{:?}", bh.capacity())
+                                );
+                            }
+                            println!("");
+                        }
                         "goal-hierarchy" => {
                             println!("ordinal hierarchy of values for {}:", actorid);
                             println!("");
                             println!("{:10} | {:10}", "Goal".bold(), "Index".bold());
                             println!("{:-^1$}", "+", 23);
-                            let mut sorted_goals: Vec<_> = actor.goal_hierarchy.0.iter().collect();
+                            let mut sorted_goals: Vec<_> = actor.goal_hierarchy.iter().collect();
                             sorted_goals.sort_by_key(|f| f.1);
                             for (goal, index) in sorted_goals {
                                 println!(
@@ -148,7 +183,7 @@ static INT_COMMANDS: &[(&str, &str)] = &[
     ("quit", "Quit the interactive interface"),
 ];
 
-struct InterfaceCompleter;
+struct InterfaceCompleter(Vec<String>);
 
 impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
     fn complete(
@@ -176,13 +211,83 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
                 Some(compls)
             }
             // Complete command parameters
-            Some("get") | Some("set") => {
+            Some("get-actor") => {
                 if words.count() == 0 {
                     let mut res = Vec::new();
 
-                    for (name, _) in prompter.variables() {
-                        if name.starts_with(word) {
-                            res.push(Completion::simple(name.to_owned()));
+                    for subcmd in vec!["preference-list", "goal-hierarchy"] {
+                        if subcmd.starts_with(word) {
+                            res.push(Completion::simple(subcmd.to_owned()));
+                        }
+                    }
+                    for actor_name in self.0.iter() {
+                        if actor_name.starts_with(word) {
+                            res.push(Completion::simple(actor_name.to_owned()));
+                        }
+                    }
+
+                    Some(res)
+                } else {
+                    None
+                }
+            }
+            Some("add-goal") | Some("remove-goal") => {
+                if words.count() == 0 {
+                    let mut res = Vec::new();
+
+                    for goal in vec!["Eat", "Shelter", "Rest", "Leisure"] {
+                        if goal.starts_with(word) {
+                            res.push(Completion::simple(goal.to_owned()));
+                        }
+                    }
+                    for actor_name in self.0.iter() {
+                        if actor_name.starts_with(word) {
+                            res.push(Completion::simple(actor_name.to_owned()));
+                        }
+                    }
+
+                    Some(res)
+                } else {
+                    None
+                }
+            }
+            Some("compare-item-values") | Some("use-item") => {
+                if words.count() == 0 {
+                    let mut res = Vec::new();
+
+                    for item in vec!["FoodUnit", "HouseUnit", "LeisureUnit1", "LeisureUnit2"] {
+                        if item.starts_with(word) {
+                            res.push(Completion::simple(item.to_owned()));
+                        }
+                    }
+                    for actor_name in self.0.iter() {
+                        if actor_name.starts_with(word) {
+                            res.push(Completion::simple(actor_name.to_owned()));
+                        }
+                    }
+
+                    Some(res)
+                } else {
+                    None
+                }
+            }
+            Some("add-satisfaction") => {
+                if words.count() == 0 {
+                    let mut res = Vec::new();
+
+                    for goal in vec!["Eat", "Shelter", "Rest", "Leisure"] {
+                        if goal.starts_with(word) {
+                            res.push(Completion::simple(goal.to_owned()));
+                        }
+                    }
+                    for item in vec!["FoodUnit", "HouseUnit", "LeisureUnit1", "LeisureUnit2"] {
+                        if item.starts_with(word) {
+                            res.push(Completion::simple(item.to_owned()));
+                        }
+                    }
+                    for actor_name in self.0.iter() {
+                        if actor_name.starts_with(word) {
+                            res.push(Completion::simple(actor_name.to_owned()));
                         }
                     }
 
