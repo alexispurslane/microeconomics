@@ -69,7 +69,7 @@ pub struct GoalWrapper {
     /// of the containing actor so it can do comparasons.
     comparator: Box<dyn Fn(&GoalData, &GoalData) -> Ordering>,
     /// The actual interesting data that we want the BinaryHeap to sort
-    goal: GoalData,
+    pub goal: GoalData,
 }
 
 impl PartialOrd for GoalWrapper {
@@ -102,10 +102,10 @@ pub type PreferenceList = HashMap<Item, BinaryHeap<GoalWrapper>>;
 /// This could easily be stored as a list, and in fact is constructed from one,
 /// but is more performant for our purposes as a map from a goal to how much it
 /// is valued.
-pub struct GoalHierarchy(HashMap<Goal, usize>);
+pub struct GoalHierarchy(pub HashMap<Goal, usize>);
 impl GoalHierarchy {
     /// Constructs hierarchy out of table.
-    fn new(goals: Vec<Goal>) -> Self {
+    pub fn new(goals: Vec<Goal>) -> Self {
         let mut hm = HashMap::new();
         for (i, goal) in goals.into_iter().enumerate() {
             hm.insert(goal, i);
@@ -117,16 +117,16 @@ impl GoalHierarchy {
 /// Individual acting, valuing, satisfying Austrian microeconomic actor
 pub struct Actor {
     /// Name for printouts
-    name: String,
+    pub name: String,
     /// Goals that might show up later, so we need to cache their information
     recurring_goals: HashMap<Goal, GoalData>,
     /// Mapping of items to their goals
-    preference_list: PreferenceList,
+    pub preference_list: PreferenceList,
     /// Mapping of goals to the items that can satisfy them
     satisfactions: HashMap<Goal, Vec<Item>>,
     // TODO: Make sure that goal heirarchy is strictly ordinal.
     /// How much goals are valued
-    goal_hierarchy: Rc<GoalHierarchy>,
+    pub goal_hierarchy: Rc<GoalHierarchy>,
 }
 
 impl Actor {
@@ -137,9 +137,9 @@ impl Actor {
     /// * `name` - actor's name, for printout results
     /// * `hierarchy` - list of actor's valued ends as `GoalData` so that they can also be added to other places.
     ///
-    pub fn new(name: &str, hierarchy: Vec<GoalData>) -> Self {
+    pub fn new(name: String, hierarchy: Vec<GoalData>) -> Self {
         let mut this = Actor {
-            name: name.to_owned(),
+            name: name,
             recurring_goals: HashMap::new(),
             preference_list: HashMap::new(),
             satisfactions: HashMap::new(),

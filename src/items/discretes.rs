@@ -1,4 +1,4 @@
-#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum Item {
     FoodUnit,
     HouseUnit,
@@ -6,7 +6,7 @@ pub enum Item {
     LeisureUnit2,
 }
 
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Copy, Clone)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Copy, Clone, Debug)]
 pub enum Goal {
     Eat,
     Shelter,
