@@ -8,6 +8,7 @@ use linefeed::terminal::Terminal;
 use linefeed::{Interface, Prompter, ReadResult};
 use preference_list::{Actor, GoalData};
 use rand::seq::IteratorRandom;
+use std::cmp::{Ord, Ordering};
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ fn main() -> io::Result<()> {
     let mut trng = rand::thread_rng();
     let mut actors: HashMap<String, Actor> = (0..opts.actor_number)
         .map(|i: i32| {
-            let mut a = Actor::new(
+            let a = Actor::new(
                 format!("Actor#{}", i),
                 GOAL_HIREARCHY.clone(),
                 vec![
@@ -113,11 +114,11 @@ fn main() -> io::Result<()> {
                             for (item, bh) in actor.preference_list.iter() {
                                 println!(
                                     "{:20} | {:20} | {:20}",
-                                    format!("{:?}", item),
+                                    format!("{:?}", item).green(),
                                     if let Some(g) = bh.peek() {
-                                        format!("{:?}", g.goal.get_goal())
+                                        format!("{:?}", g.goal.get_goal()).blue()
                                     } else {
-                                        "N/A".to_string()
+                                        "N/A".to_string().blue()
                                     },
                                     format!("{:?}", bh.capacity())
                                 );
@@ -134,20 +135,55 @@ fn main() -> io::Result<()> {
                             for (goal, index) in sorted_goals {
                                 println!(
                                     "{:10} | {:10}",
-                                    format!("{:?}", goal),
+                                    format!("{:?}", goal).blue(),
                                     format!("{:?}", index)
                                 );
                             }
                             println!("");
                         }
-                        x => println!("unknown subcommand: {}", x),
+                        x => println!("{} {}", "unknown subcommand:".red(), x),
                     }
                 } else {
                     println!("cannot find actor: {}", actorid);
                 }
             }
+            ["compare-item-values", actor, item1, item2] => {
+                use Item::*;
+                let i1 = match *item1 {
+                    "FoodUnit" => FoodUnit,
+                    "HouseUnit" => HouseUnit,
+                    "LeisureUnit1" => LeisureUnit1,
+                    "LeisureUnit2" => LeisureUnit2,
+                    _ => panic!("unrecognized item"),
+                };
+                let i2 = match *item2 {
+                    "FoodUnit" => FoodUnit,
+                    "HouseUnit" => HouseUnit,
+                    "LeisureUnit1" => LeisureUnit1,
+                    "LeisureUnit2" => LeisureUnit2,
+                    _ => panic!("unrecognized item"),
+                };
+                match actors
+                    .get(&actor.to_string())
+                    .unwrap()
+                    .compare_item_values(i1, i2)
+                {
+                    Some(Ordering::Equal) => println!("These items are valued the same!"),
+                    Some(Ordering::Less) => println!(
+                        "{} is valued less than {}",
+                        item1.to_string().green(),
+                        item2.to_string().green()
+                    ),
+                    Some(Ordering::Greater) => println!(
+                        "{} is valued more than {}",
+                        item1.to_string().green(),
+                        item2.to_string().green()
+                    ),
+                    None => println!("{}", "actor does not recognize one of these items".red()),
+                }
+            }
             ["quit"] => return Ok(()),
-            _ => println!("unrecognized command: {}", cmd.join(" ")),
+            _ => println!("{} {}", "unrecognized command".red(), cmd.join(" ")),
         }
     }
 
@@ -172,10 +208,6 @@ static INT_COMMANDS: &[(&str, &str)] = &[
         "Get an actor property (preference-list, goal-hierarchy)",
     ),
     ("tick", "Tick time forward and run simulation on its own"),
-    ("add-goal", "Add a goal to an actor"),
-    ("remove-goal", "Remove a goal from an actor"),
-    ("use-item", "Have actor use item"),
-    ("add-satisfaction", "Add item that can satisfy actor's goal"),
     (
         "compare-item-values",
         "Have an actor compare two item's values",
@@ -231,27 +263,7 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
                     None
                 }
             }
-            Some("add-goal") | Some("remove-goal") => {
-                if words.count() == 0 {
-                    let mut res = Vec::new();
-
-                    for goal in vec!["Eat", "Shelter", "Rest", "Leisure"] {
-                        if goal.starts_with(word) {
-                            res.push(Completion::simple(goal.to_owned()));
-                        }
-                    }
-                    for actor_name in self.0.iter() {
-                        if actor_name.starts_with(word) {
-                            res.push(Completion::simple(actor_name.to_owned()));
-                        }
-                    }
-
-                    Some(res)
-                } else {
-                    None
-                }
-            }
-            Some("compare-item-values") | Some("use-item") => {
+            Some("compare-item-values") => {
                 if words.count() == 0 {
                     let mut res = Vec::new();
 
