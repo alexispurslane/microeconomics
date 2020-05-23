@@ -101,7 +101,7 @@ fn main() -> io::Result<()> {
                 if let Some(actor) = actors.get(&actorid.to_string()) {
                     match *property {
                         "preference-list" => {
-                            println!("ordinal hierarchy of items for {}:", actorid);
+                            println!("ordinal hierarchy of items for {}:", actorid.yellow());
                             println!("");
                             println!(
                                 "{:20} | {:20} | {:20}",
@@ -116,7 +116,7 @@ fn main() -> io::Result<()> {
                                     "{:20} | {:20} | {:20}",
                                     format!("{:?}", item).green(),
                                     if let Some(g) = bh.peek() {
-                                        format!("{:?}", g.goal.get_goal()).blue()
+                                        format!("{:?}", g.goal).blue()
                                     } else {
                                         "N/A".to_string().blue()
                                     },
@@ -125,8 +125,20 @@ fn main() -> io::Result<()> {
                             }
                             println!("");
                         }
+                        "goal-registry" => {
+                            println!("goal details for {}:", actorid.yellow());
+                            let mut registry: Vec<(&Goal, &GoalData)> =
+                                actor.goal_registry.iter().collect();
+                            registry.sort_by_key(|(g, _)| actor.goal_hierarchy.get(g).unwrap());
+                            for (goal, goal_data) in registry {
+                                println!("");
+                                println!("- {}", format!("{:?}", goal).blue());
+                                println!("  {:?}", goal_data);
+                            }
+                            println!("");
+                        }
                         "goal-hierarchy" => {
-                            println!("ordinal hierarchy of values for {}:", actorid);
+                            println!("ordinal hierarchy of values for {}:", actorid.yellow());
                             println!("");
                             println!("{:10} | {:10}", "Goal".bold(), "Index".bold());
                             println!("{:-^1$}", "+", 23);
@@ -208,6 +220,7 @@ static INT_COMMANDS: &[(&str, &str)] = &[
         "Get an actor property (preference-list, goal-hierarchy)",
     ),
     ("tick", "Tick time forward and run simulation on its own"),
+    ("give-item", "Add an item to an actor's inventory"),
     (
         "compare-item-values",
         "Have an actor compare two item's values",
@@ -247,7 +260,7 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
                 if words.count() == 0 {
                     let mut res = Vec::new();
 
-                    for subcmd in vec!["preference-list", "goal-hierarchy"] {
+                    for subcmd in vec!["preference-list", "goal-hierarchy", "goal-registry"] {
                         if subcmd.starts_with(word) {
                             res.push(Completion::simple(subcmd.to_owned()));
                         }

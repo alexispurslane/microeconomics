@@ -13,7 +13,7 @@ use std::rc::Rc;
 /// place where the metadata about recurrance time intervals matter. I could
 /// have designed separate data structures for those two peices of information,
 /// but that would've been unweildy in my opinion.
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum GoalData {
     /// A goal that either occurs at random times or only once.
     Satisfaction {
@@ -68,9 +68,9 @@ impl GoalData {
 pub struct GoalWrapper {
     /// Closure that encloses a reference-counted pointer to the goal hierarchy
     /// of the containing actor so it can do comparasons.
-    comparator: Box<dyn Fn(&GoalData, &GoalData) -> Ordering>,
+    comparator: Box<dyn Fn(&Goal, &Goal) -> Ordering>,
     /// The actual interesting data that we want the BinaryHeap to sort
-    pub goal: GoalData,
+    pub goal: Goal,
 }
 
 impl PartialOrd for GoalWrapper {
@@ -104,10 +104,10 @@ pub type PreferenceList = HashMap<Item, BinaryHeap<Rc<GoalWrapper>>>;
 pub struct Actor {
     /// Name for printouts
     pub name: String,
+    /// Registry of data for goals (to avoid needing interior mutability, etc)
+    pub goal_registry: HashMap<Goal, GoalData>,
     /// Absolute list of goals to use for actions
     current_goals: BinaryHeap<Rc<GoalWrapper>>,
-    /// Goals that have a time element
-    recurring_goals: HashMap<Goal, Rc<GoalWrapper>>,
     /// Mapping of items to their goals
     pub preference_list: PreferenceList,
     /// Mapping of goals to the items that can satisfy them
@@ -123,7 +123,8 @@ pub struct Actor {
     pub state: ActorState,
 }
 
-enum ActorState {
+#[derive(PartialEq)]
+pub enum ActorState {
     SearchingForGoal,
     Satisfied,
     WillingToTrade,
@@ -145,7 +146,7 @@ impl Actor {
         let mut this = Actor {
             name: name,
             current_goals: BinaryHeap::new(),
-            recurring_goals: HashMap::new(),
+            goal_registry: HashMap::new(),
             preference_list: HashMap::new(),
             satisfactions: satisfactions.into_iter().collect(),
             goal_hierarchy: HashMap::new(),
@@ -153,7 +154,7 @@ impl Actor {
             state: ActorState::SearchingForGoal,
         };
         for (i, goal) in hierarchy.into_iter().enumerate() {
-            this.add_goal(goal, i);
+            this.add_new_goal(goal, i);
         }
         this
     }
@@ -172,43 +173,40 @@ impl Actor {
     ///
     pub fn tick(&mut self, other_actors: &mut Vec<Actor>) {
         self.state = ActorState::SearchingForGoal;
-        for (goal, goal_data) in self.recurring_goals {
+        let mut reintroduce_goals = vec![];
+        for (goal, goal_data) in self.goal_registry.iter_mut() {
             if let GoalData::RegularSatisfaction {
-                mut time,
+                time,
                 time_required,
                 ..
             } = goal_data
             {
-                time += 1;
-                if time >= time_required {
-                    time = 0;
-                    println!(
-                        "{} reintroduces {} on time",
-                        self.name.yellow(),
-                        format!("{:?}", goal).blue()
-                    );
-                    self.add_goal(goal_data, *self.goal_hierarchy.get(&goal).unwrap());
+                *time += 1;
+                if *time >= *time_required {
+                    *time = 0;
+                    reintroduce_goals.push(goal.clone());
                 }
             }
         }
-        if let Some(highest_goal) = self.current_goals.peek() {
+        for goal in reintroduce_goals {
+            self.add_goal(goal);
+        }
+
+        // SEARCHING FOR GOAL
+        let mut goal = None;
+        if self.state == ActorState::SearchingForGoal {
+            goal = self.current_goals.peek().map(|x| x.goal);
+            println!(
+                "{} selects {} as a goal",
+                self.name.yellow(),
+                format!("{:?}", goal).blue()
+            );
+        }
+        if let Some(goal) = goal {
             let mut possibilities = vec![];
-            for item in self
-                .satisfactions
-                .get(&highest_goal.goal.get_goal())
-                .unwrap_or(&vec![])
-            {
+            for item in self.satisfactions.get(&goal).unwrap_or(&vec![]) {
                 if self.inventory.contains(&item) {
-                    if self
-                        .preference_list
-                        .get(item)
-                        .unwrap()
-                        .peek()
-                        .unwrap()
-                        .goal
-                        .get_goal()
-                        == highest_goal.goal.get_goal()
-                    {
+                    if self.preference_list.get(item).unwrap().peek().unwrap().goal == goal {
                         // Jackpot, use this
                         possibilities.push(*item);
                         break;
@@ -230,7 +228,7 @@ impl Actor {
                 // has a higher-valued goal, so they can use it for that goal,
                 // and decide to trade instead for their current goal (if the
                 // situation isn't too dire)
-                self.use_item_for_goal(*possibilities.last().unwrap(), *highest_goal);
+                self.use_item_for_goal(*possibilities.last().unwrap(), goal);
                 self.state = ActorState::Satisfied;
             } else if possibilities.len() == 0 {
                 // We need an item
@@ -241,26 +239,45 @@ impl Actor {
         }
     }
 
-    /// Adds a goal to all of the BinaryHeaps for all of the items that can satisfy it (sorted).
+    /// Adds a *new* goal (not already in registry) to all of the BinaryHeaps
+    /// for all of the items that can satisfy it (sorted).
     ///
     /// # Arguments
     ///
     /// * `goal` - `GoalData` of what's to be added
     /// * `location` - the location for it to be inserted into the hierarchy of ends/values
     ///
-    pub fn add_goal(&mut self, goal: GoalData, location: usize) {
-        let actual_goal = goal.get_goal();
+    pub fn add_new_goal(&mut self, goal: GoalData, location: usize) {
+        self.add_goal(goal.get_goal());
+        self.goal_hierarchy.insert(goal.get_goal(), location);
+        self.goal_registry.insert(goal.get_goal(), goal);
+    }
+
+    /// Adds a goal (already in registry and hierarchy) to all of the
+    /// BinaryHeaps for all of the items that can satisfy it (sorted).
+    ///
+    /// # Arguments
+    ///
+    /// * `goal` - `Goal` of what's to be added, acts as ID into registry to get `GoalData`.
+    /// * `location` - the location for it to be inserted into the hierarchy of ends/values
+    ///
+    pub fn add_goal(&mut self, goal: Goal) {
+        println!(
+            "{} reintroduces {}",
+            self.name.yellow(),
+            format!("{:?}", goal).blue()
+        );
         let gh = self.goal_hierarchy.clone();
         let ordered_goal = Rc::new(GoalWrapper {
-            comparator: Box::new(move |x: &GoalData, y: &GoalData| {
-                let xval = gh.get(&x.get_goal());
-                let yval = gh.get(&y.get_goal());
+            comparator: Box::new(move |x: &Goal, y: &Goal| {
+                let xval = gh.get(&x);
+                let yval = gh.get(&y);
                 xval.and_then(|x| yval.map(|y| x.cmp(y)))
                     .unwrap_or(Ordering::Equal)
             }),
             goal: goal,
         });
-        if let Some(effected_entries) = self.satisfactions.get(&actual_goal) {
+        if let Some(effected_entries) = self.satisfactions.get(&goal) {
             for item in effected_entries.iter() {
                 self.preference_list
                     .entry(*item)
@@ -269,11 +286,6 @@ impl Actor {
             }
         }
         self.current_goals.push(ordered_goal);
-        if goal.is_recurring() {
-            self.recurring_goals
-                .insert(goal.get_goal(), ordered_goal.clone());
-        }
-        self.goal_hierarchy.insert(goal.get_goal(), location);
     }
 
     /// Removes any goal in the entire list of goals this actor has.
@@ -302,7 +314,7 @@ impl Actor {
                         self.preference_list.get(&item).map(
                             |goals: &BinaryHeap<Rc<GoalWrapper>>| {
                                 for og in goals.into_iter() {
-                                    if og.goal.get_goal() != actual_goal {
+                                    if og.goal != actual_goal {
                                         new.push(og.clone());
                                     }
                                 }
@@ -316,13 +328,13 @@ impl Actor {
 
         let mut new = BinaryHeap::new();
         for og in self.current_goals.iter() {
-            if og.goal.get_goal() != actual_goal {
+            if og.goal != actual_goal {
                 new.push(og.clone());
             }
         }
         self.current_goals = new;
 
-        self.recurring_goals.remove(&actual_goal);
+        self.goal_registry.remove(&actual_goal);
         self.goal_hierarchy.remove(&actual_goal);
     }
 
@@ -337,37 +349,43 @@ impl Actor {
     ///
     /// Doesn't update recurring goals. See `tick`.
     ///
-    pub fn use_item_for_goal(&mut self, item: Item, goal_data: Rc<GoalWrapper>) {
+    pub fn use_item_for_goal(&mut self, item: Item, goal: Goal) {
+        println!(
+            "{} uses item {} for goal {}",
+            self.name.yellow(),
+            format!("{:?}", item).green(),
+            format!("{:?}", goal).blue()
+        );
         self.inventory
             .remove(self.inventory.iter().position(|&r| r == item).unwrap());
-        if let Some(goals) = self.preference_list.get_mut(&item) {
-            if let Some(wrapper) = goals.peek() {
-                let highest_valued_goal: GoalData = wrapper.goal;
-                match highest_valued_goal {
-                    GoalData::Satisfaction {
-                        goal,
-                        units_required,
-                        mut units,
-                        ..
-                    } => {
-                        units += 1;
-                        if units >= units_required {
-                            self.remove_goal(goal);
-                        }
+        let mut should_remove = false;
+        {
+            let highest_valued_goal: &mut GoalData = self.goal_registry.get_mut(&goal).unwrap();
+            match highest_valued_goal {
+                GoalData::Satisfaction {
+                    units_required,
+                    units,
+                    ..
+                } => {
+                    *units += 1;
+                    if *units >= *units_required {
+                        should_remove = true;
                     }
-                    GoalData::RegularSatisfaction {
-                        goal,
-                        units_required,
-                        mut units,
-                        ..
-                    } => {
-                        units += 1;
-                        if units >= units_required {
-                            self.remove_goal(goal);
-                        }
+                }
+                GoalData::RegularSatisfaction {
+                    units_required,
+                    units,
+                    ..
+                } => {
+                    *units += 1;
+                    if *units >= *units_required {
+                        should_remove = true;
                     }
                 }
             }
+        }
+        if should_remove {
+            self.remove_goal(goal);
         }
     }
 
@@ -381,7 +399,7 @@ impl Actor {
         self.preference_list
             .get(&item)
             .and_then(|goals| goals.peek())
-            .map(|og| og.goal.get_goal())
+            .map(|og| og.goal)
     }
 
     /// Compare two items to see which is more valuable based on the goals it can satisfy
@@ -392,7 +410,11 @@ impl Actor {
     /// * `b` - second item
     ///
     pub fn compare_item_values(&self, a: Item, b: Item) -> Option<Ordering> {
-        self.get_best_goal(a)
-            .and_then(|a_g| self.get_best_goal(b).map(|b_g| b_g.cmp(&a_g)))
+        let gh = self.goal_hierarchy.clone();
+        let a_g = self.get_best_goal(a)?;
+        let b_g = self.get_best_goal(b)?;
+        let a_val = gh.get(&a_g)?;
+        let b_val = gh.get(&b_g)?;
+        Some(b_val.cmp(a_val))
     }
 }
