@@ -123,10 +123,14 @@ pub struct Actor {
     pub state: ActorState,
 }
 
+/// The state the actor is in for one tick (reset at the start of every tick)
 #[derive(PartialEq)]
 pub enum ActorState {
+    /// Needs a goal
     SearchingForGoal,
+    /// Has a goal and has found an item in its own inventory to satisfy it
     Satisfied,
+    /// Needs to trade to get an item
     WillingToTrade,
 }
 
