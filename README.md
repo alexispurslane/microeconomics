@@ -21,6 +21,7 @@ Download the project and enter the directory.
 
 - `cargo run` will run the program directly (it requires arguments)
 - `cargo build` will build an executable
+- `cargo doc --open` will open the extensive code docs I have written
 
 There will be tests eventually.
 
