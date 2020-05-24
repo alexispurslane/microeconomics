@@ -125,6 +125,53 @@ fn main() -> io::Result<()> {
                             }
                             println!("");
                         }
+                        "state" => {
+                            println!("general AI state for {}:", actorid.yellow());
+                            println!("");
+                            println!("- ACTOR STATE");
+                            println!("  {}", format!("{:?}", actor.state).yellow());
+                            println!("");
+                            println!("- CURRENT GOALS IN PLAY");
+                            println!("  {:10} | {:10}", "Goal".bold(), "Index".bold());
+                            println!("  {:-^1$}", "+", 23);
+                            let mut sorted_goals: Vec<_> = actor
+                                .current_goals
+                                .iter()
+                                .map(|x| (x.goal, actor.goal_hierarchy.get(&x.goal).unwrap()))
+                                .collect();
+                            sorted_goals.sort_by_key(|f| f.1);
+                            for (goal, index) in sorted_goals {
+                                println!(
+                                    "  {:10} | {:10}",
+                                    format!("{:?}", goal).blue(),
+                                    format!("{:?}", index)
+                                );
+                            }
+                            println!("");
+                            println!("- INVENTORY");
+                            println!(
+                                "  {:20} | {:20} | {:20}",
+                                "Item".bold(),
+                                "Highest-Valued Goal".bold(),
+                                "# Goals".bold()
+                            );
+                            let twenty = "-".to_string().repeat(20);
+                            println!("  {}-+-{}-+-{}", twenty, twenty, twenty);
+                            for item in actor.inventory.iter() {
+                                let bh = actor.preference_list.get(&item).unwrap();
+                                println!(
+                                    "  {:20} | {:20} | {:20}",
+                                    format!("{:?}", item).green(),
+                                    if let Some(g) = bh.peek() {
+                                        format!("{:?}", g.goal).blue()
+                                    } else {
+                                        "N/A".to_string().blue()
+                                    },
+                                    format!("{:?}", bh.capacity())
+                                );
+                            }
+                            println!("");
+                        }
                         "goal-registry" => {
                             println!("goal details for {}:", actorid.yellow());
                             let mut registry: Vec<(&Goal, &GoalData)> =
@@ -194,6 +241,20 @@ fn main() -> io::Result<()> {
                     None => println!("{}", "actor does not recognize one of these items".red()),
                 }
             }
+            ["give-item", actor, item] => {
+                use Item::*;
+                if let Some(actor) = actors.get_mut(&actor.to_string()) {
+                    actor.add_item(match *item {
+                        "FoodUnit" => FoodUnit,
+                        "HouseUnit" => HouseUnit,
+                        "LeisureUnit1" => LeisureUnit1,
+                        "LeisureUnit2" => LeisureUnit2,
+                        _ => panic!("unrecognized item"),
+                    });
+                } else {
+                    println!("{}", "unrecognized actor".red())
+                }
+            }
             ["quit"] => return Ok(()),
             _ => println!("{} {}", "unrecognized command".red(), cmd.join(" ")),
         }
@@ -217,7 +278,7 @@ static INT_COMMANDS: &[(&str, &str)] = &[
     ("help", "You're looking at it"),
     (
         "get-actor",
-        "Get an actor property (preference-list, goal-hierarchy)",
+        "Get a prop (preference-list, goal-hierarchy, goal-registry, state)",
     ),
     ("tick", "Tick time forward and run simulation on its own"),
     ("give-item", "Add an item to an actor's inventory"),
@@ -257,14 +318,25 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
             }
             // Complete command parameters
             Some("get-actor") => {
-                if words.count() == 0 {
+                let wc = words.count();
+                if wc == 0 {
                     let mut res = Vec::new();
 
-                    for subcmd in vec!["preference-list", "goal-hierarchy", "goal-registry"] {
+                    for subcmd in vec![
+                        "preference-list",
+                        "goal-hierarchy",
+                        "goal-registry",
+                        "state",
+                    ] {
                         if subcmd.starts_with(word) {
                             res.push(Completion::simple(subcmd.to_owned()));
                         }
                     }
+
+                    Some(res)
+                } else if wc == 1 {
+                    let mut res = Vec::new();
+
                     for actor_name in self.0.iter() {
                         if actor_name.starts_with(word) {
                             res.push(Completion::simple(actor_name.to_owned()));
@@ -277,17 +349,23 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
                 }
             }
             Some("compare-item-values") => {
-                if words.count() == 0 {
+                let wc = words.count();
+                if wc == 0 {
+                    let mut res = Vec::new();
+
+                    for actor_name in self.0.iter() {
+                        if actor_name.starts_with(word) {
+                            res.push(Completion::simple(actor_name.to_owned()));
+                        }
+                    }
+
+                    Some(res)
+                } else if wc == 1 || wc == 2 {
                     let mut res = Vec::new();
 
                     for item in vec!["FoodUnit", "HouseUnit", "LeisureUnit1", "LeisureUnit2"] {
                         if item.starts_with(word) {
                             res.push(Completion::simple(item.to_owned()));
-                        }
-                    }
-                    for actor_name in self.0.iter() {
-                        if actor_name.starts_with(word) {
-                            res.push(Completion::simple(actor_name.to_owned()));
                         }
                     }
 
@@ -296,23 +374,24 @@ impl<Term: Terminal> Completer<Term> for InterfaceCompleter {
                     None
                 }
             }
-            Some("add-satisfaction") => {
-                if words.count() == 0 {
+            Some("give-item") => {
+                let wc = words.count();
+                if wc == 0 {
                     let mut res = Vec::new();
 
-                    for goal in vec!["Eat", "Shelter", "Rest", "Leisure"] {
-                        if goal.starts_with(word) {
-                            res.push(Completion::simple(goal.to_owned()));
-                        }
-                    }
-                    for item in vec!["FoodUnit", "HouseUnit", "LeisureUnit1", "LeisureUnit2"] {
-                        if item.starts_with(word) {
-                            res.push(Completion::simple(item.to_owned()));
-                        }
-                    }
                     for actor_name in self.0.iter() {
                         if actor_name.starts_with(word) {
                             res.push(Completion::simple(actor_name.to_owned()));
+                        }
+                    }
+
+                    Some(res)
+                } else if wc == 1 {
+                    let mut res = Vec::new();
+
+                    for item in vec!["FoodUnit", "HouseUnit", "LeisureUnit1", "LeisureUnit2"] {
+                        if item.starts_with(word) {
+                            res.push(Completion::simple(item.to_owned()));
                         }
                     }
 

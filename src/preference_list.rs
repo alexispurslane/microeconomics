@@ -107,11 +107,11 @@ pub struct Actor {
     /// Registry of data for goals (to avoid needing interior mutability, etc)
     pub goal_registry: HashMap<Goal, GoalData>,
     /// Absolute list of goals to use for actions
-    current_goals: BinaryHeap<Rc<GoalWrapper>>,
+    pub current_goals: BinaryHeap<Rc<GoalWrapper>>,
     /// Mapping of items to their goals
     pub preference_list: PreferenceList,
     /// Mapping of goals to the items that can satisfy them
-    satisfactions: HashMap<Goal, Vec<Item>>,
+    pub satisfactions: HashMap<Goal, Vec<Item>>,
     // TODO: Make sure that goal heirarchy is strictly ordinal.
     /// How much goals are valued. This could easily be stored as a list, and in
     /// fact is constructed from one, but is more performant for our purposes as
@@ -124,14 +124,16 @@ pub struct Actor {
 }
 
 /// The state the actor is in for one tick (reset at the start of every tick)
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum ActorState {
-    /// Needs a goal
+    /// Needs a goal (previous goals satisfied)
     SearchingForGoal,
-    /// Has a goal and has found an item in its own inventory to satisfy it
-    Satisfied,
-    /// Needs to trade to get an item
+    /// Needs to trade to get an item, needs to do that on next tick
     WillingToTrade,
+    /// Found an actor to try bidding with, begin bidding on next tick
+    FoundTradePartner(usize),
+    /// Current bid (either this actor's or the other's)
+    Bidding(usize, usize, usize),
 }
 
 impl Actor {
@@ -165,18 +167,13 @@ impl Actor {
 
     /// This function runs the actor's simplified-praxeology choice-AI for one
     /// tick, where ticks are the time unit of the recurring goals, and consist
-    /// of one action:
-    ///
-    /// * use item
-    /// * find actor
-    /// * if found actor, begin trade (trade proceeds by steps)
+    /// of one action (see README).
     ///
     /// # Arguments
     ///
     /// * `other_actors` - list of the other actors available to trade with
     ///
     pub fn tick(&mut self, other_actors: &mut Vec<Actor>) {
-        self.state = ActorState::SearchingForGoal;
         let mut reintroduce_goals = vec![];
         for (goal, goal_data) in self.goal_registry.iter_mut() {
             if let GoalData::RegularSatisfaction {
@@ -196,51 +193,192 @@ impl Actor {
             self.add_goal(goal);
         }
 
-        // SEARCHING FOR GOAL
-        let mut goal = None;
-        if self.state == ActorState::SearchingForGoal {
-            goal = self.current_goals.peek().map(|x| x.goal);
-            println!(
-                "{} selects {} as a goal",
-                self.name.yellow(),
-                format!("{:?}", goal).blue()
-            );
-        }
+        let goal = self.current_goals.peek().map(|x| x.goal);
+        println!(
+            "{} selects {} as a goal",
+            self.name.yellow(),
+            format!("{:?}", goal).blue()
+        );
+
         if let Some(goal) = goal {
-            let mut possibilities = vec![];
-            for item in self.satisfactions.get(&goal).unwrap_or(&vec![]) {
-                if self.inventory.contains(&item) {
-                    if self.preference_list.get(item).unwrap().peek().unwrap().goal == goal {
-                        // Jackpot, use this
-                        possibilities.push(*item);
-                        break;
-                    } else {
-                        // We want to use the least-valued item that can satisfy our need
-                        match possibilities.binary_search_by(|probe| {
-                            self.compare_item_values(*probe, *item).unwrap()
-                        }) {
-                            Ok(_) => {}
-                            Err(pos) => possibilities.insert(pos, *item),
+            match self.state {
+                ActorState::SearchingForGoal => {
+                    // Get the highest-valued goal of the ones that are in play
+                    // If it exists...
+                    // ...try to find all of the items that *might* be able to satisfy this goal
+                    let possibilities = self.find_item_for_goal(goal);
+                    println!(
+                        "{} finds {} items for use on goal {}",
+                        self.name.yellow(),
+                        possibilities.len(),
+                        format!("{:?}", goal).blue()
+                    );
+                    if possibilities.len() >= 1 {
+                        // We ended up finding a viable item, so use it
+
+                        // TODO: Add time-preference so that agents will wait if an item
+                        // has a higher-valued goal, so they can use it for that goal,
+                        // and decide to trade instead for their current goal (if the
+                        // situation isn't too dire)
+                        self.use_item_for_goal(*possibilities.last().unwrap(), goal);
+                        self.state = ActorState::SearchingForGoal;
+                    } else if possibilities.len() == 0 {
+                        // We need an item
+                        if self.inventory.len() > 0 {
+                            self.state = ActorState::WillingToTrade;
+                        } else {
+                            self.state = ActorState::SearchingForGoal;
                         }
                     }
                 }
-            }
-            if possibilities.len() >= 1 {
-                // We ended up finding a viable item, so use it
-
-                // TODO: Add time-preference so that agents will wait if an item
-                // has a higher-valued goal, so they can use it for that goal,
-                // and decide to trade instead for their current goal (if the
-                // situation isn't too dire)
-                self.use_item_for_goal(*possibilities.last().unwrap(), goal);
-                self.state = ActorState::Satisfied;
-            } else if possibilities.len() == 0 {
-                // We need an item
-                self.state = ActorState::WillingToTrade;
+                ActorState::WillingToTrade => {
+                    // Find trade partner
+                    for (idx, actor) in other_actors.iter().enumerate() {
+                        if actor.name == self.name {
+                            continue;
+                        }
+                        let actors_items =
+                            actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                        if actors_items.len() > 0 {
+                            self.state = ActorState::FoundTradePartner(idx);
+                            break;
+                        }
+                    }
+                }
+                ActorState::FoundTradePartner(idx) => {
+                    // Make bid
+                    let other_actor = &mut other_actors[idx];
+                    let actors_items =
+                        other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                    let (item1, item2) = (
+                        *self.inventory.last().unwrap(),
+                        *actors_items.first().unwrap(),
+                    );
+                    let bid_accepted = other_actor.compare_item_values(item1, item2.1).unwrap()
+                        == Ordering::Greater
+                        && self.compare_item_values(item1, item2.1).unwrap() != Ordering::Greater;
+                    if bid_accepted {
+                        // add other's item to inventory, remove it from theirs
+                        self.add_item(item2.1);
+                        self.inventory.remove(self.inventory.len() - 1);
+                        // remove my item from my inventory, add it to theirs
+                        other_actor.add_item(item1);
+                        other_actor.inventory.remove(item2.0);
+                    } else {
+                        // store bid
+                        self.state = ActorState::Bidding(idx, self.inventory.len() - 1, item2.0);
+                    }
+                }
+                ActorState::Bidding(idx, prev_item1, prev_item2) => {
+                    let other_actor = &other_actors[idx];
+                    let actors_items =
+                        other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                    // if there's no more items for this actor, find another to
+                    // trade with
+                    if actors_items.last().unwrap().0 >= prev_item2 || prev_item1 == 0 {
+                        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
+                            if actor.name == self.name {
+                                continue;
+                            }
+                            let actors_items =
+                                actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                            if actors_items.len() > 0 {
+                                self.state = ActorState::FoundTradePartner(idx);
+                                break;
+                            }
+                        }
+                    }
+                    let other_actor = &mut other_actors[idx];
+                    // get actor's next bid based on last bid
+                    let (item1, item2) = (
+                        self.inventory[prev_item1 - 1],
+                        actors_items[actors_items
+                            .iter()
+                            .position(|(i, _)| *i == prev_item2 + 1)
+                            .unwrap()],
+                    );
+                    let bid_accepted = other_actor.compare_item_values(item1, item2.1).unwrap()
+                        == Ordering::Greater
+                        && self.compare_item_values(item1, item2.1).unwrap() != Ordering::Greater;
+                    if bid_accepted {
+                        // add other's item to inventory, remove it from theirs
+                        self.add_item(item2.1);
+                        self.inventory.remove(self.inventory.len() - 1);
+                        // remove my item from my inventory, add it to theirs
+                        other_actor.add_item(item1);
+                        other_actor.inventory.remove(item2.0);
+                    } else {
+                        self.state = ActorState::Bidding(idx, prev_item1 - 1, item2.0);
+                    }
+                }
             }
         } else {
             println!("{} does not pursue any goals", self.name.yellow());
         }
+    }
+
+    pub fn has_item_of(&self, items: &Vec<Item>) -> Vec<(usize, Item)> {
+        self.inventory
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| items.contains(x))
+            .map(|(i, x)| (i, x.clone()))
+            .collect()
+    }
+
+    /// Adds item to inventory in a sorted manner
+    pub fn add_item(&mut self, item: Item) {
+        let loc = self
+            .inventory
+            .binary_search_by(|probe| {
+                self.compare_item_values(*probe, item)
+                    .unwrap_or(Ordering::Equal)
+            })
+            .unwrap_or_else(|e| e);
+        self.inventory.insert(loc, item);
+    }
+
+    /// Finds any items in the inventory that might satisfy a goal.
+    ///
+    /// # Arguments
+    ///
+    /// * `goal` - goal to satisfy
+    ///
+    /// # Notes
+    ///
+    ///  If it finds an item whose highest-valued goal is that goal, it returns
+    ///  a list of just that. Also, the list is sorted greatest-valued item to
+    ///  least using an insertion sort (best I can do without adding a binheap
+    ///  wrapper).
+    fn find_item_for_goal(&self, goal: Goal) -> Vec<Item> {
+        let mut possibilities = vec![];
+        let opts = self.satisfactions.get(&goal).unwrap();
+        for item in self.inventory.iter() {
+            if opts.contains(&item) {
+                // If we have an item whose best use is for this goal...
+                if self
+                    .preference_list
+                    .get(&item)
+                    .unwrap()
+                    .peek()
+                    .unwrap()
+                    .goal
+                    == goal
+                {
+                    // ...jackpot, use it!
+                    possibilities.push(item.clone());
+                    break;
+                } else {
+                    // ...otherwise, We want to use the least-valued
+                    // item that can satisfy our need, so insert
+                    // sortedly into vector (slow-ass, but I'm lazy and
+                    // don't want to make another binary heap wrapper
+                    // (argh!))
+                    possibilities.push(item.clone());
+                }
+            }
+        }
+        possibilities
     }
 
     /// Adds a *new* goal (not already in registry) to all of the BinaryHeaps
@@ -354,42 +492,50 @@ impl Actor {
     /// Doesn't update recurring goals. See `tick`.
     ///
     pub fn use_item_for_goal(&mut self, item: Item, goal: Goal) {
-        println!(
-            "{} uses item {} for goal {}",
-            self.name.yellow(),
-            format!("{:?}", item).green(),
-            format!("{:?}", goal).blue()
-        );
-        self.inventory
-            .remove(self.inventory.iter().position(|&r| r == item).unwrap());
-        let mut should_remove = false;
-        {
-            let highest_valued_goal: &mut GoalData = self.goal_registry.get_mut(&goal).unwrap();
-            match highest_valued_goal {
-                GoalData::Satisfaction {
-                    units_required,
-                    units,
-                    ..
-                } => {
-                    *units += 1;
-                    if *units >= *units_required {
-                        should_remove = true;
+        if let Some(idx) = self.inventory.iter().position(|&r| r == item) {
+            self.inventory.remove(idx);
+            let mut should_remove = false;
+            {
+                let highest_valued_goal: &mut GoalData = self.goal_registry.get_mut(&goal).unwrap();
+                println!(
+                    "{} uses item {} for goal {}",
+                    self.name.yellow(),
+                    format!("{:?}", item).green(),
+                    format!("{:?}", goal).blue()
+                );
+                match highest_valued_goal {
+                    GoalData::Satisfaction {
+                        units_required,
+                        units,
+                        ..
+                    } => {
+                        *units += 1;
+                        if *units >= *units_required {
+                            should_remove = true;
+                        }
                     }
-                }
-                GoalData::RegularSatisfaction {
-                    units_required,
-                    units,
-                    ..
-                } => {
-                    *units += 1;
-                    if *units >= *units_required {
-                        should_remove = true;
+                    GoalData::RegularSatisfaction {
+                        units_required,
+                        units,
+                        ..
+                    } => {
+                        *units += 1;
+                        if *units >= *units_required {
+                            should_remove = true;
+                        }
                     }
                 }
             }
-        }
-        if should_remove {
-            self.remove_goal(goal);
+            if should_remove {
+                self.remove_goal(goal);
+            }
+        } else {
+            println!(
+                "{} does not have item {} for goal {} in inventory",
+                self.name.yellow(),
+                format!("{:?}", item).green(),
+                format!("{:?}", goal).blue()
+            );
         }
     }
 

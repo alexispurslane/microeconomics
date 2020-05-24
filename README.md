@@ -76,7 +76,7 @@ heap in the **preference list**. See section **1.4**
 This is centered in the `tick` function. It has a fairly simple logic system,
 which follows this pattern (from the point of view of the AI):
 
-1. Get my highest-valued goal that's currently in play
+1. Get my highest-valued goal that's currently in play (**single tick**)
     1. If I have an item for which the highest valued goal it can satisfy is
        this goal, use that item right of the bat, and move to the next tick.
        (Have food, will eat).
@@ -88,15 +88,17 @@ which follows this pattern (from the point of view of the AI):
        like it might mess up marginal utility. I'm not sure. It might actually
        be unnecessary.
 1. If I have no items that can satisfy this goal, then I need to trade.
+   (**multiple ticks**)
     1. With trade, I cycle through every other AI available to me, and ask it
        whether it has an item which it values less than it values the item I
-       value least, which can suffice for my selected goal.
+       value least, which can suffice for my selected goal. (**one tick per cycle**)
     1. We cycle through each of the items in my inventory, going upward in value
        (I bid higher and higher offers to buy) until I reach an item in my
        inventory which I value more than the goal I'm trying to satisfy; I don't
        want to sell this item to satisfy my current goal, because then the
        forgone goal (opportunity cost) would be higher than the value I'd
        gained. If at this point I haven't reached a deal, I go to another actor.
+       (**one tick per bid**)
        
 ### 2.1.4 Performance Characteristics
 
