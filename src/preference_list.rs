@@ -1,6 +1,7 @@
 use crate::items::discretes::Goal;
 use crate::items::discretes::Item;
 use colored::*;
+use std::cell::RefCell;
 use std::cmp::{Ord, Ordering};
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
@@ -173,7 +174,7 @@ impl Actor {
     ///
     /// * `other_actors` - list of the other actors available to trade with
     ///
-    pub fn tick(&mut self, other_actors: &mut Vec<Actor>) {
+    pub fn tick(&mut self, other_actors: Vec<&RefCell<Actor>>) {
         let mut reintroduce_goals = vec![];
         for (goal, goal_data) in self.goal_registry.iter_mut() {
             if let GoalData::RegularSatisfaction {
@@ -234,6 +235,7 @@ impl Actor {
                 ActorState::WillingToTrade => {
                     // Find trade partner
                     for (idx, actor) in other_actors.iter().enumerate() {
+                        let actor = actor.borrow();
                         if actor.name == self.name {
                             continue;
                         }
@@ -247,7 +249,7 @@ impl Actor {
                 }
                 ActorState::FoundTradePartner(idx) => {
                     // Make bid
-                    let other_actor = &mut other_actors[idx];
+                    let mut other_actor = other_actors[idx].borrow_mut();
                     let actors_items =
                         other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                     let (item1, item2) = (
@@ -264,19 +266,21 @@ impl Actor {
                         // remove my item from my inventory, add it to theirs
                         other_actor.add_item(item1);
                         other_actor.inventory.remove(item2.0);
+                        self.state = ActorState::SearchingForGoal;
                     } else {
                         // store bid
                         self.state = ActorState::Bidding(idx, self.inventory.len() - 1, item2.0);
                     }
                 }
                 ActorState::Bidding(idx, prev_item1, prev_item2) => {
-                    let other_actor = &other_actors[idx];
+                    let other_actor = other_actors[idx].borrow();
                     let actors_items =
                         other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                     // if there's no more items for this actor, find another to
                     // trade with
                     if actors_items.last().unwrap().0 >= prev_item2 || prev_item1 == 0 {
                         for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
+                            let actor = actor.borrow();
                             if actor.name == self.name {
                                 continue;
                             }
@@ -288,7 +292,7 @@ impl Actor {
                             }
                         }
                     }
-                    let other_actor = &mut other_actors[idx];
+                    let mut other_actor = other_actors[idx].borrow_mut();
                     // get actor's next bid based on last bid
                     let (item1, item2) = (
                         self.inventory[prev_item1 - 1],
@@ -307,6 +311,7 @@ impl Actor {
                         // remove my item from my inventory, add it to theirs
                         other_actor.add_item(item1);
                         other_actor.inventory.remove(item2.0);
+                        self.state = ActorState::SearchingForGoal;
                     } else {
                         self.state = ActorState::Bidding(idx, prev_item1 - 1, item2.0);
                     }

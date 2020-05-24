@@ -8,14 +8,15 @@ use linefeed::terminal::Terminal;
 use linefeed::{Interface, Prompter, ReadResult};
 use preference_list::{Actor, GoalData};
 use rand::seq::IteratorRandom;
-use std::cmp::{Ord, Ordering};
+use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use structopt::StructOpt;
 
 fn main() -> io::Result<()> {
-    let GOAL_HIREARCHY: Vec<GoalData> = vec![
+    let goal_hierarchy: Vec<GoalData> = vec![
         GoalData::RegularSatisfaction {
             goal: Goal::Eat,
             id: 0,
@@ -47,11 +48,11 @@ fn main() -> io::Result<()> {
     ];
     let opts: Cli = Cli::from_args();
     let mut trng = rand::thread_rng();
-    let mut actors: HashMap<String, Actor> = (0..opts.actor_number)
+    let actors: HashMap<String, RefCell<Actor>> = (0..opts.actor_number)
         .map(|i: i32| {
             let a = Actor::new(
                 format!("Actor#{}", i),
-                GOAL_HIREARCHY.clone(),
+                goal_hierarchy.clone(),
                 vec![
                     (Goal::Eat, vec![Item::FoodUnit]),
                     (Goal::Shelter, vec![Item::HouseUnit]),
@@ -68,7 +69,7 @@ fn main() -> io::Result<()> {
                     ),
                 ],
             );
-            (a.name.clone(), a)
+            (a.name.clone(), RefCell::new(a))
         })
         .collect();
 
@@ -77,7 +78,7 @@ fn main() -> io::Result<()> {
     println!("Press Ctrl-D or enter \"quit\" to exit.");
     println!("");
 
-    let mut reader = Interface::new("microeconomics")?;
+    let reader = Interface::new("microeconomics")?;
     reader.set_completer(Arc::new(InterfaceCompleter(
         actors.keys().into_iter().map(|x| x.clone()).collect(),
     )));
@@ -99,6 +100,7 @@ fn main() -> io::Result<()> {
             }
             ["get-actor", property, actorid] => {
                 if let Some(actor) = actors.get(&actorid.to_string()) {
+                    let actor = actor.borrow();
                     match *property {
                         "preference-list" => {
                             println!("ordinal hierarchy of items for {}:", actorid.yellow());
@@ -225,6 +227,7 @@ fn main() -> io::Result<()> {
                 match actors
                     .get(&actor.to_string())
                     .unwrap()
+                    .borrow()
                     .compare_item_values(i1, i2)
                 {
                     Some(Ordering::Equal) => println!("These items are valued the same!"),
@@ -241,9 +244,15 @@ fn main() -> io::Result<()> {
                     None => println!("{}", "actor does not recognize one of these items".red()),
                 }
             }
+            ["tick"] => {
+                for (_, actor) in actors.iter() {
+                    actor.borrow_mut().tick(actors.values().collect());
+                }
+            }
             ["give-item", actor, item] => {
                 use Item::*;
-                if let Some(actor) = actors.get_mut(&actor.to_string()) {
+                if let Some(actor) = actors.get(&actor.to_string()) {
+                    let mut actor = actor.borrow_mut();
                     actor.add_item(match *item {
                         "FoodUnit" => FoodUnit,
                         "HouseUnit" => HouseUnit,
