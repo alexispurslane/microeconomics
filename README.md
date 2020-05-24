@@ -15,7 +15,7 @@ action, including all the wide options available and nuances that that comes
 with, while this actor cannot encompass much of that at all, but this is still
 an interesting experiment.
 
-# 1. How To Run
+# 1 How To Run
 
 Download the project and enter the directory.
 
@@ -25,20 +25,20 @@ Download the project and enter the directory.
 
 There will be tests eventually.
 
-# 2. Subsystems
+# 2 Subsystems
 
 There are a few subsystems to this program, which I'll break down below. If you
 want information about how these systems are *implemented* (instead of their
 telos), check the docs.
 
-## 1.1 Actor
+## 2.1 Actor
 
 The actor subsystem is the brain, heart, and soul of this program all wrapped
 into one. Since this is a microeconomic simulator (using both terms loosely),
 everything inherently operates on the level of the individual actor, meaning
 that most of the functionality of the system is centered here.
 
-### 1.1 Value System
+### 2.1.1 Value System
 
 Each actor has a **goal hierarchy**, which is an ordinal list of goals which
 represents which goals are valued more highly than the others. This informs
@@ -55,7 +55,7 @@ The agent keeps a hash-map of items as keys, with a sorted list (technically,
 binary heap) of all the goals which they can satisfy for valuation purposes.
 This is called the **preference list**.
 
-### 1.2 The Goal System
+### 2.1.2 The Goal System
 
 Some goals require multiple items to satisfy, and some recur on a set timer
 (after a set number of `tick`s). This means that we need a **goal registry** to
@@ -71,7 +71,7 @@ re-adding goals already on the registry, which is slightly less slow. Removing
 goals is *extremely* time consuming, since it requires rebuilding every binary
 heap in the **preference list**. See section **1.4**
 
-### 1.3 The AI Action System
+### 2.1.3 The AI Action System
 
 This is centered in the `tick` function. It has a fairly simple logic system,
 which follows this pattern (from the point of view of the AI):
@@ -98,7 +98,7 @@ which follows this pattern (from the point of view of the AI):
        forgone goal (opportunity cost) would be higher than the value I'd
        gained. If at this point I haven't reached a deal, I go to another actor.
        
-### 1.4 Performance Characteristics
+### 2.1.4 Performance Characteristics
 
 Fast operations:
 
@@ -124,8 +124,13 @@ characteristics in theory shouldn't be that bad. The fast operations are usually
 on the order of O(1), where as slow operations are worst-case O(k\*n) and
 pathological operations might approach O(2\*k\*n) or so.
 
-## 1.2 REPL
+## 2.2 REPL
 
 There's a very nice repl, with highlighting, autocompletion, and everything, for
 you to interact with the various actors and inspect their internal state. Since
 the actors aren't finished, the REPL isn't finished either for obvious reasons.
+
+### 2.2.1 Screenshots (WIP)
+
+![WIP 1](SC1.png)
+![WIP 2](SC2.png)
