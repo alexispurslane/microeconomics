@@ -255,8 +255,8 @@ impl Actor {
                     }
                 }
                 ActorState::FoundTradePartner(idx) => {
-                    // Make bid
-                    let mut other_actor = other_actors[idx].borrow_mut();
+                    // Check if transaction is viable at all
+                    let mut other_actor = other_actors[idx].borrow();
                     let actors_items =
                         other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                     let (item1, item2) = (
@@ -264,56 +264,25 @@ impl Actor {
                         *actors_items.first().unwrap(),
                     );
                     println!(
-                        "{} makes first bid: will give {} for {}",
+                        "{} makes first tentative proposal bid: will give {} for {}",
                         self.name.yellow(),
                         format!("{:?}", item1).green(),
                         format!("{:?}", item2.1).green(),
                     );
                     if self.compare_item_values(item1, item2.1).unwrap() != Ordering::Less {
-                        println!("This trade will never work.");
-                        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
-                            let actor = actor.borrow();
-                            if actor.name == self.name {
-                                continue;
-                            }
-                            let actors_items =
-                                actor.has_item_of(self.satisfactions.get(&goal).unwrap());
-                            if actors_items.len() > 0 {
-                                println!(
-                                    "{} finds {} to trade with next",
-                                    self.name.yellow(),
-                                    format!("Actor#{}", idx).yellow()
-                                );
-                                self.state = ActorState::FoundTradePartner(idx);
-                                break;
-                            }
-                        }
-                    }
-                    let other_accepts = other_actor.compare_item_values(item1, item2.1).unwrap()
-                        == Ordering::Greater;
-                    println!(
-                        "{} {} this deal",
-                        other_actor.name.yellow(),
-                        if other_accepts {
-                            "accepts"
+                        println!("This trade will never work");
+                        if let Some(next_idx) = self.find_next_actor_for_trade(other_actors, idx) {
+                            self.state = ActorState::FoundTradePartner(next_idx);
                         } else {
-                            "does not accept"
+                            self.state = ActorState::SearchingForGoal;
                         }
-                    );
-                    if other_accepts {
-                        // add other's item to inventory, remove it from theirs
-                        self.add_item(item2.1);
-                        self.inventory.remove(self.inventory.len() - 1);
-                        // remove my item from my inventory, add it to theirs
-                        other_actor.add_item(item1);
-                        other_actor.inventory.remove(item2.0);
-                        println!("{}", "Trade complete".green());
-                        self.state = ActorState::SearchingForGoal;
-                    } else {
-                        // store bid
-                        println!("{} ups bid", self.name.yellow());
-                        self.state = ActorState::Bidding(idx, self.inventory.len() - 1, item2.0);
                     }
+                    // prepare to bid
+                    println!(
+                        "{} preparse to start bidding in earnest",
+                        self.name.yellow()
+                    );
+                    self.state = ActorState::Bidding(idx, self.inventory.len(), item2.0 - 1);
                 }
                 ActorState::Bidding(idx, prev_item1, prev_item2) => {
                     let other_actor = other_actors[idx].borrow();
@@ -323,22 +292,10 @@ impl Actor {
                     // trade with
                     if actors_items.last().unwrap().0 >= prev_item2 || prev_item1 == 0 {
                         println!("No more items to trade, going to next actor.");
-                        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
-                            let actor = actor.borrow();
-                            if actor.name == self.name {
-                                continue;
-                            }
-                            let actors_items =
-                                actor.has_item_of(self.satisfactions.get(&goal).unwrap());
-                            if actors_items.len() > 0 {
-                                println!(
-                                    "{} finds {} to trade with next",
-                                    self.name.yellow(),
-                                    format!("Actor#{}", idx).yellow()
-                                );
-                                self.state = ActorState::FoundTradePartner(idx);
-                                break;
-                            }
+                        if let Some(next_idx) = self.find_next_actor_for_trade(other_actors, idx) {
+                            self.state = ActorState::FoundTradePartner(next_idx);
+                        } else {
+                            self.state = ActorState::SearchingForGoal;
                         }
                     }
                     let mut other_actor = other_actors[idx].borrow_mut();
@@ -377,6 +334,29 @@ impl Actor {
         } else {
             println!("{} does not pursue any goals", self.name.yellow());
         }
+    }
+
+    fn find_next_actor_for_trade(
+        &self,
+        other_actors: Vec<&RefCell<Actor>>,
+        idx: usize,
+    ) -> Option<usize> {
+        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
+            let actor = actor.borrow();
+            if actor.name == self.name {
+                continue;
+            }
+            let actors_items = actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+            if actors_items.len() > 0 {
+                println!(
+                    "{} finds {} to trade with next",
+                    self.name.yellow(),
+                    format!("Actor#{}", idx).yellow()
+                );
+                return Some(idx);
+            }
+        }
+        None
     }
 
     pub fn has_item_of(&self, items: &Vec<Item>) -> Vec<(usize, Item)> {
