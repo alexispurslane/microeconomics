@@ -50,7 +50,7 @@ fn main() -> io::Result<()> {
     let mut trng = rand::thread_rng();
     let actors: HashMap<String, RefCell<Actor>> = (0..opts.actor_number)
         .map(|i: i32| {
-            let a = Actor::new(
+            let mut a = Actor::new(
                 format!("Actor#{}", i),
                 goal_hierarchy.clone(),
                 vec![
@@ -69,6 +69,22 @@ fn main() -> io::Result<()> {
                     ),
                 ],
             );
+            if let Some(ri) = vec![
+                vec![Item::FoodUnit, Item::FoodUnit, Item::FoodUnit],
+                vec![Item::HouseUnit, Item::FoodUnit],
+                vec![Item::LeisureUnit1, Item::LeisureUnit2],
+                vec![
+                    Item::FoodUnit,
+                    Item::FoodUnit,
+                    Item::FoodUnit,
+                    Item::LeisureUnit2,
+                ],
+            ]
+            .iter()
+            .choose(&mut trng)
+            {
+                a.inventory.extend(ri.iter());
+            }
             (a.name.clone(), RefCell::new(a))
         })
         .collect();
@@ -160,16 +176,16 @@ fn main() -> io::Result<()> {
                             let twenty = "-".to_string().repeat(20);
                             println!("  {}-+-{}-+-{}", twenty, twenty, twenty);
                             for item in actor.inventory.iter() {
-                                let bh = actor.preference_list.get(&item).unwrap();
+                                let bh = actor.preference_list.get(&item);
                                 println!(
                                     "  {:20} | {:20} | {:20}",
                                     format!("{:?}", item).green(),
-                                    if let Some(g) = bh.peek() {
+                                    if let Some(g) = bh.and_then(|x| x.peek()) {
                                         format!("{:?}", g.goal).blue()
                                     } else {
                                         "N/A".to_string().blue()
                                     },
-                                    format!("{:?}", bh.capacity())
+                                    format!("{:?}", bh.map(|x| x.capacity()).unwrap_or(0))
                                 );
                             }
                             println!("");

@@ -226,6 +226,7 @@ impl Actor {
                     } else if possibilities.len() == 0 {
                         // We need an item
                         if self.inventory.len() > 0 {
+                            println!("{} is now willing to trade", self.name.yellow(),);
                             self.state = ActorState::WillingToTrade;
                         } else {
                             self.state = ActorState::SearchingForGoal;
@@ -235,14 +236,20 @@ impl Actor {
                 ActorState::WillingToTrade => {
                     // Find trade partner
                     for (idx, actor) in other_actors.iter().enumerate() {
-                        let actor = actor.borrow();
-                        if actor.name == self.name {
+                        if format!("Actor#{}", idx) == self.name {
                             continue;
                         }
+                        let actor = actor.borrow();
                         let actors_items =
                             actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                         if actors_items.len() > 0 {
                             self.state = ActorState::FoundTradePartner(idx);
+                            println!(
+                                "{} finds trade partner {} with {} items it is interested in",
+                                self.name.yellow(),
+                                actor.name.yellow(),
+                                actors_items.len()
+                            );
                             break;
                         }
                     }
@@ -256,19 +263,55 @@ impl Actor {
                         *self.inventory.last().unwrap(),
                         *actors_items.first().unwrap(),
                     );
-                    let bid_accepted = other_actor.compare_item_values(item1, item2.1).unwrap()
-                        == Ordering::Greater
-                        && self.compare_item_values(item1, item2.1).unwrap() != Ordering::Greater;
-                    if bid_accepted {
+                    println!(
+                        "{} makes first bid: will give {} for {}",
+                        self.name.yellow(),
+                        format!("{:?}", item1).green(),
+                        format!("{:?}", item2.1).green(),
+                    );
+                    if self.compare_item_values(item1, item2.1).unwrap() != Ordering::Less {
+                        println!("This trade will never work.");
+                        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
+                            let actor = actor.borrow();
+                            if actor.name == self.name {
+                                continue;
+                            }
+                            let actors_items =
+                                actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                            if actors_items.len() > 0 {
+                                println!(
+                                    "{} finds {} to trade with next",
+                                    self.name.yellow(),
+                                    format!("Actor#{}", idx).yellow()
+                                );
+                                self.state = ActorState::FoundTradePartner(idx);
+                                break;
+                            }
+                        }
+                    }
+                    let other_accepts = other_actor.compare_item_values(item1, item2.1).unwrap()
+                        == Ordering::Greater;
+                    println!(
+                        "{} {} this deal",
+                        other_actor.name.yellow(),
+                        if other_accepts {
+                            "accepts"
+                        } else {
+                            "does not accept"
+                        }
+                    );
+                    if other_accepts {
                         // add other's item to inventory, remove it from theirs
                         self.add_item(item2.1);
                         self.inventory.remove(self.inventory.len() - 1);
                         // remove my item from my inventory, add it to theirs
                         other_actor.add_item(item1);
                         other_actor.inventory.remove(item2.0);
+                        println!("{}", "Trade complete".green());
                         self.state = ActorState::SearchingForGoal;
                     } else {
                         // store bid
+                        println!("{} ups bid", self.name.yellow());
                         self.state = ActorState::Bidding(idx, self.inventory.len() - 1, item2.0);
                     }
                 }
@@ -279,6 +322,7 @@ impl Actor {
                     // if there's no more items for this actor, find another to
                     // trade with
                     if actors_items.last().unwrap().0 >= prev_item2 || prev_item1 == 0 {
+                        println!("No more items to trade, going to next actor.");
                         for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
                             let actor = actor.borrow();
                             if actor.name == self.name {
@@ -287,6 +331,11 @@ impl Actor {
                             let actors_items =
                                 actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                             if actors_items.len() > 0 {
+                                println!(
+                                    "{} finds {} to trade with next",
+                                    self.name.yellow(),
+                                    format!("Actor#{}", idx).yellow()
+                                );
                                 self.state = ActorState::FoundTradePartner(idx);
                                 break;
                             }
@@ -301,6 +350,12 @@ impl Actor {
                             .position(|(i, _)| *i == prev_item2 + 1)
                             .unwrap()],
                     );
+                    println!(
+                        "{} makes bid: will give {} for {}",
+                        self.name.yellow(),
+                        format!("{:?}", item1).green(),
+                        format!("{:?}", item2.1).green(),
+                    );
                     let bid_accepted = other_actor.compare_item_values(item1, item2.1).unwrap()
                         == Ordering::Greater
                         && self.compare_item_values(item1, item2.1).unwrap() != Ordering::Greater;
@@ -312,7 +367,9 @@ impl Actor {
                         other_actor.add_item(item1);
                         other_actor.inventory.remove(item2.0);
                         self.state = ActorState::SearchingForGoal;
+                        println!("{}", "Trade complete".green());
                     } else {
+                        println!("{} ups bid", self.name.yellow());
                         self.state = ActorState::Bidding(idx, prev_item1 - 1, item2.0);
                     }
                 }
