@@ -331,16 +331,17 @@ impl Actor {
                         let me = self.compare_item_values(item1, item2.1) != Ordering::Greater;
                         let bid_accepted = other && me;
                         if bid_accepted {
+                            println!("\n-----");
                             println!("Inventories before:");
                             println!(
                                 "- {}: {}",
                                 self.name.yellow(),
-                                format!("{:?}", self.inventory).green()
+                                format!("{:?}", self.inventory).red()
                             );
                             println!(
                                 "- {}: {}",
                                 other_actor.name.yellow(),
-                                format!("{:?}", other_actor.inventory).green()
+                                format!("{:?}", other_actor.inventory).red()
                             );
 
                             // add other's item to inventory, remove it from theirs
@@ -349,18 +350,20 @@ impl Actor {
                             // remove my item from my inventory, add it to theirs
                             other_actor.add_item(item1);
                             other_actor.inventory.remove(item2.0);
+                            println!("-----");
 
                             println!("Inventories after:");
                             println!(
-                                "- {}: {}",
+                                "+ {}: {}",
                                 self.name.yellow(),
                                 format!("{:?}", self.inventory).green()
                             );
                             println!(
-                                "- {}: {}",
+                                "+ {}: {}",
                                 other_actor.name.yellow(),
                                 format!("{:?}", other_actor.inventory).green()
                             );
+                            println!("-----\n");
 
                             self.state = ActorState::SearchingForGoal;
                             other_actor.state = ActorState::SearchingForGoal;
