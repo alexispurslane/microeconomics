@@ -48,7 +48,7 @@ fn main() -> io::Result<()> {
     ];
     let opts: Cli = Cli::from_args();
     let mut trng = rand::thread_rng();
-    let actors: HashMap<String, RefCell<Actor>> = (0..opts.actor_number)
+    let actors: Vec<RefCell<Actor>> = (0..opts.actor_number)
         .map(|i: i32| {
             let mut a = Actor::new(
                 format!("Actor#{}", i),
@@ -85,7 +85,7 @@ fn main() -> io::Result<()> {
             {
                 a.inventory.extend(ri.iter());
             }
-            (a.name.clone(), RefCell::new(a))
+            RefCell::new(a)
         })
         .collect();
 
@@ -96,7 +96,9 @@ fn main() -> io::Result<()> {
 
     let reader = Interface::new("microeconomics")?;
     reader.set_completer(Arc::new(InterfaceCompleter(
-        actors.keys().into_iter().map(|x| x.clone()).collect(),
+        (0..opts.actor_number)
+            .map(|i| format!("Actor#{}", i))
+            .collect(),
     )));
     reader.set_prompt(&"interaction> ".bold().blue().to_string())?;
 
@@ -115,7 +117,12 @@ fn main() -> io::Result<()> {
                 println!();
             }
             ["get-actor", property, actorid] => {
-                if let Some(actor) = actors.get(&actorid.to_string()) {
+                let actor_number = actorid
+                    .split("#")
+                    .nth(1)
+                    .and_then(|x| x.parse::<usize>().ok())
+                    .unwrap();
+                if let Some(actor) = actors.get(actor_number) {
                     let actor = actor.borrow();
                     match *property {
                         "preference-list" => {
@@ -225,6 +232,11 @@ fn main() -> io::Result<()> {
                 }
             }
             ["compare-item-values", actor, item1, item2] => {
+                let actor_number = actor
+                    .split("#")
+                    .nth(1)
+                    .and_then(|x| x.parse::<usize>().ok())
+                    .unwrap();
                 use Item::*;
                 let i1 = match *item1 {
                     "FoodUnit" => FoodUnit,
@@ -241,7 +253,7 @@ fn main() -> io::Result<()> {
                     _ => panic!("unrecognized item"),
                 };
                 match actors
-                    .get(&actor.to_string())
+                    .get(actor_number)
                     .unwrap()
                     .borrow()
                     .compare_item_values(i1, i2)
@@ -260,13 +272,19 @@ fn main() -> io::Result<()> {
                 }
             }
             ["tick"] => {
-                for (_, actor) in actors.iter() {
-                    actor.borrow_mut().tick(actors.values().collect());
+                println!("");
+                for actor in actors.iter() {
+                    actor.borrow_mut().tick(&actors);
                 }
             }
             ["give-item", actor, item] => {
+                let actor_number = actor
+                    .split("#")
+                    .nth(1)
+                    .and_then(|x| x.parse::<usize>().ok())
+                    .unwrap();
                 use Item::*;
-                if let Some(actor) = actors.get(&actor.to_string()) {
+                if let Some(actor) = actors.get(actor_number) {
                     let mut actor = actor.borrow_mut();
                     actor.add_item(match *item {
                         "FoodUnit" => FoodUnit,
