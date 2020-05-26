@@ -235,28 +235,16 @@ impl Actor {
                 }
                 ActorState::WillingToTrade => {
                     // Find trade partner
-                    for (idx, actor) in other_actors.iter().enumerate() {
-                        if format!("Actor#{}", idx) == self.name {
-                            continue;
-                        }
-                        let actor = actor.borrow();
-                        let actors_items =
-                            actor.has_item_of(self.satisfactions.get(&goal).unwrap());
-                        if actors_items.len() > 0 {
-                            self.state = ActorState::FoundTradePartner(idx);
-                            println!(
-                                "{} finds trade partner {} with {} items it is interested in",
-                                self.name.yellow(),
-                                actor.name.yellow(),
-                                actors_items.len()
-                            );
-                            break;
-                        }
+                    if let Some(next_idx) = self.find_next_actor_for_trade(goal, &other_actors, -1)
+                    {
+                        self.state = ActorState::FoundTradePartner(next_idx);
+                    } else {
+                        self.state = ActorState::SearchingForGoal;
                     }
                 }
                 ActorState::FoundTradePartner(idx) => {
                     // Check if transaction is viable at all
-                    let mut other_actor = other_actors[idx].borrow();
+                    let other_actor = other_actors[idx].borrow();
                     let actors_items =
                         other_actor.has_item_of(self.satisfactions.get(&goal).unwrap());
                     let (item1, item2) = (
@@ -269,9 +257,11 @@ impl Actor {
                         format!("{:?}", item1).green(),
                         format!("{:?}", item2.1).green(),
                     );
-                    if self.compare_item_values(item1, item2.1).unwrap() != Ordering::Less {
+                    if self.compare_item_values(item1, item2.1) != Ordering::Less {
                         println!("This trade will never work");
-                        if let Some(next_idx) = self.find_next_actor_for_trade(other_actors, idx) {
+                        if let Some(next_idx) =
+                            self.find_next_actor_for_trade(goal, &other_actors, idx as i32)
+                        {
                             self.state = ActorState::FoundTradePartner(next_idx);
                         } else {
                             self.state = ActorState::SearchingForGoal;
@@ -282,7 +272,11 @@ impl Actor {
                         "{} preparse to start bidding in earnest",
                         self.name.yellow()
                     );
-                    self.state = ActorState::Bidding(idx, self.inventory.len(), item2.0 - 1);
+                    self.state = ActorState::Bidding(
+                        idx,
+                        self.inventory.len(),
+                        item2.0.checked_sub(1).unwrap_or(0),
+                    );
                 }
                 ActorState::Bidding(idx, prev_item1, prev_item2) => {
                     let other_actor = other_actors[idx].borrow();
@@ -292,7 +286,9 @@ impl Actor {
                     // trade with
                     if actors_items.last().unwrap().0 >= prev_item2 || prev_item1 == 0 {
                         println!("No more items to trade, going to next actor.");
-                        if let Some(next_idx) = self.find_next_actor_for_trade(other_actors, idx) {
+                        if let Some(next_idx) =
+                            self.find_next_actor_for_trade(goal, &other_actors, idx as i32)
+                        {
                             self.state = ActorState::FoundTradePartner(next_idx);
                         } else {
                             self.state = ActorState::SearchingForGoal;
@@ -313,9 +309,9 @@ impl Actor {
                         format!("{:?}", item1).green(),
                         format!("{:?}", item2.1).green(),
                     );
-                    let bid_accepted = other_actor.compare_item_values(item1, item2.1).unwrap()
+                    let bid_accepted = other_actor.compare_item_values(item1, item2.1)
                         == Ordering::Greater
-                        && self.compare_item_values(item1, item2.1).unwrap() != Ordering::Greater;
+                        && self.compare_item_values(item1, item2.1) != Ordering::Greater;
                     if bid_accepted {
                         // add other's item to inventory, remove it from theirs
                         self.add_item(item2.1);
@@ -338,22 +334,30 @@ impl Actor {
 
     fn find_next_actor_for_trade(
         &self,
-        other_actors: Vec<&RefCell<Actor>>,
-        idx: usize,
+        goal: Goal,
+        other_actors: &Vec<&RefCell<Actor>>,
+        idx: i32,
     ) -> Option<usize> {
-        for (idx, actor) in other_actors.iter().skip(idx + 1).enumerate() {
-            let actor = actor.borrow();
-            if actor.name == self.name {
+        for (idx, actor) in other_actors.iter().skip((idx + 1) as usize).enumerate() {
+            if format!("Actor#{}", idx) == self.name {
                 continue;
             }
-            let actors_items = actor.has_item_of(self.satisfactions.get(&goal).unwrap());
-            if actors_items.len() > 0 {
+            if let Ok(actor) = actor.try_borrow() {
+                let actors_items = actor.has_item_of(self.satisfactions.get(&goal).unwrap());
+                if actors_items.len() > 0 {
+                    println!(
+                        "{} finds trade partner {} with {} items it is interested in",
+                        self.name.yellow(),
+                        actor.name.yellow(),
+                        actors_items.len()
+                    );
+                    return Some(idx);
+                }
+            } else {
                 println!(
-                    "{} finds {} to trade with next",
-                    self.name.yellow(),
+                    "{} is already occupied trading with another actor, skipping",
                     format!("Actor#{}", idx).yellow()
                 );
-                return Some(idx);
             }
         }
         None
@@ -372,10 +376,7 @@ impl Actor {
     pub fn add_item(&mut self, item: Item) {
         let loc = self
             .inventory
-            .binary_search_by(|probe| {
-                self.compare_item_values(*probe, item)
-                    .unwrap_or(Ordering::Equal)
-            })
+            .binary_search_by(|probe| self.compare_item_values(*probe, item))
             .unwrap_or_else(|e| e);
         self.inventory.insert(loc, item);
     }
@@ -601,12 +602,18 @@ impl Actor {
     /// * `a` - first item
     /// * `b` - second item
     ///
-    pub fn compare_item_values(&self, a: Item, b: Item) -> Option<Ordering> {
+    pub fn compare_item_values(&self, a: Item, b: Item) -> Ordering {
         let gh = self.goal_hierarchy.clone();
-        let a_g = self.get_best_goal(a)?;
-        let b_g = self.get_best_goal(b)?;
-        let a_val = gh.get(&a_g)?;
-        let b_val = gh.get(&b_g)?;
-        Some(b_val.cmp(a_val))
+        let a_val = self.get_best_goal(a).and_then(|a_g| gh.get(&a_g));
+        let b_val = self.get_best_goal(b).and_then(|b_g| gh.get(&b_g));
+        if a_val.is_none() && b_val.is_some() {
+            Ordering::Less
+        } else if a_val.is_some() && b_val.is_none() {
+            Ordering::Greater
+        } else if a_val.is_none() && b_val.is_none() {
+            Ordering::Equal
+        } else {
+            b_val.unwrap().cmp(a_val.unwrap())
+        }
     }
 }

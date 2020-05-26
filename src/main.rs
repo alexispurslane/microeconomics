@@ -246,18 +246,17 @@ fn main() -> io::Result<()> {
                     .borrow()
                     .compare_item_values(i1, i2)
                 {
-                    Some(Ordering::Equal) => println!("These items are valued the same!"),
-                    Some(Ordering::Less) => println!(
+                    Ordering::Equal => println!("These items are valued the same!"),
+                    Ordering::Less => println!(
                         "{} is valued less than {}",
                         item1.to_string().green(),
                         item2.to_string().green()
                     ),
-                    Some(Ordering::Greater) => println!(
+                    Ordering::Greater => println!(
                         "{} is valued more than {}",
                         item1.to_string().green(),
                         item2.to_string().green()
                     ),
-                    None => println!("{}", "actor does not recognize one of these items".red()),
                 }
             }
             ["tick"] => {
